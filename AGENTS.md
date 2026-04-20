@@ -31,3 +31,10 @@
 - 一次提交应尽量只表达一个主意图；若同时包含多类变更，以主要变更类型为准。
 - 纯文档改动使用 `docs`。
 - 生成结果随脚本或结构调整一起更新时，优先使用触发该批变更的主类型，而不是机械地全部记为 `chore`。
+
+## Nowcoder Packaging
+
+- `python3 scripts/package_nowcoder_week.py week1`
+- 该命令会把 `nowcoder/week1/` 打成 15 个单题 zip 和 1 个整周 zip。
+- 默认输出目录为 `nowcoder/packages/week1/`。
+- 产物命名为 `A.zip` 到 `O.zip`，以及 `week1.zip`。
