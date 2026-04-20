@@ -171,6 +171,42 @@ def split_metadata_and_body(text: str) -> tuple[list[str], list[str]]:
     return metadata, lines[idx:]
 
 
+def extract_embedded_metadata(metadata: list[str], body_lines: list[str]) -> tuple[list[str], list[str]]:
+    prefixes = (
+        "> 训练周次：",
+        "> 原题来源：",
+        "> 原题路径：",
+        "> 难度 / 范围：",
+    )
+    cleaned: list[str] = []
+    idx = 0
+    latest = metadata[:]
+    while idx < len(body_lines):
+        if body_lines[idx].strip() == "---":
+            j = idx + 1
+            while j < len(body_lines) and body_lines[j].strip() == "":
+                j += 1
+            block: list[str] = []
+            while j < len(body_lines) and body_lines[j].startswith(prefixes):
+                block.append(body_lines[j])
+                j += 1
+            if block:
+                latest = block
+                idx = j
+                continue
+        if body_lines[idx].startswith(prefixes):
+            block = []
+            while idx < len(body_lines) and body_lines[idx].startswith(prefixes):
+                block.append(body_lines[idx])
+                idx += 1
+            if block:
+                latest = block
+            continue
+        cleaned.append(body_lines[idx])
+        idx += 1
+    return latest, cleaned
+
+
 def parse_metadata_value(metadata: list[str], prefix: str) -> str:
     for line in metadata:
         if line.startswith(prefix):
@@ -226,6 +262,7 @@ def extract_title_and_sections(body_lines: list[str]) -> tuple[str, dict[str, Se
         if match:
             level = len(match.group(1))
             heading = match.group(2).strip()
+            heading = heading.rstrip("：:")
             lowered = heading.lower()
             if level == 1 and not title:
                 title = heading
@@ -385,6 +422,7 @@ def process_week_dir(week_dir: Path) -> None:
     for path in problem_files:
         text = path.read_text(encoding="utf-8")
         metadata, body_lines = split_metadata_and_body(text)
+        metadata, body_lines = extract_embedded_metadata(metadata, body_lines)
         source_path = parse_metadata_value(metadata, "> 原题路径：")
         title, sections, samples = extract_title_and_sections(body_lines)
         title = apply_translations(source_path, title, sections)

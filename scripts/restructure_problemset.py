@@ -8,7 +8,7 @@ import os
 import re
 import shutil
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 
@@ -74,7 +74,7 @@ WEEKLY_GROUP_CONFIGS = [
         "tag_display": "栈 / 队列",
     },
 ]
-WEEKLY_SELECTION_ORDER = ["WEEK4", "WEEK3", "WEEK2", "WEEK1"]
+WEEKLY_SELECTION_ORDER = ["WEEK1", "WEEK4", "WEEK3", "WEEK2"]
 
 
 @dataclass
@@ -88,6 +88,8 @@ class WeeklyCandidate:
     relative_path: str
     notes: str
     scopes: set[str]
+    weekly_remark: str = ""
+    supplement_priority: int = 99
 
 
 @dataclass
@@ -770,6 +772,70 @@ def candidate_rank_key(candidate: WeeklyCandidate, week_tags: set[str], selected
     )
 
 
+def supplement_reason_for_week(candidate: WeeklyCandidate, week_key: str) -> tuple[str, int] | None:
+    title = candidate.title
+    scope_text = candidate.scope
+    text = (ROOT / candidate.relative_path).read_text(encoding="utf-8")
+    haystack = f"{title}\n{scope_text}\n{text}"
+
+    if week_key == "WEEK2":
+        if "动态规划" in candidate.scopes:
+            return None
+        if any(keyword in title for keyword in ["中位数", "第K", "第 K", "查找", "有序"]):
+            return ("同思路补位：二分边界同构", 0)
+        if any(keyword in title for keyword in ["回文", "平衡串", "子串", "窗口"]) or any(
+            keyword in haystack for keyword in ["双指针", "左右指针", "滑动窗口", "窗口"]
+        ):
+            return ("同思路补位：双指针/滑窗同构", 1)
+        if "排序" in candidate.scopes and any(keyword in title for keyword in ["查找", "中位数"]):
+            return ("同思路补位：有序扫描/二分同构", 2)
+        return None
+
+    if week_key == "WEEK3":
+        if any(keyword in title for keyword in ["计数", "统计", "词典", "校验"]):
+            return ("同思路补位：哈希计数映射", 0)
+        if any(keyword in title for keyword in ["子串", "字符串", "密码", "加密", "字符", "DNA"]):
+            return ("同思路补位：字符串哈希/映射", 1)
+        if any(keyword in title for keyword in ["区间", "差值", "前缀", "求和"]) or any(
+            keyword in haystack for keyword in ["前缀和", "差分", "哈希表", "映射", "字典"]
+        ):
+            return ("同思路补位：前缀统计同构", 2)
+        return None
+
+    if week_key == "WEEK4":
+        if any(keyword in title for keyword in ["优先队列", "合并果子", "搬水果"]) or (
+            "数据结构" in candidate.scopes and "堆" in candidate.scopes
+        ):
+            return ("同思路补位：优先队列/堆模拟", 0)
+        if any(keyword in title for keyword in ["链表", "报数", "传花"]) or "链表" in candidate.scopes:
+            return ("同思路补位：链表/队列同构", 1)
+        if any(keyword in title for keyword in ["表达式", "计算器", "括号"]) or (
+            "数据结构" in candidate.scopes and "模拟" in candidate.scopes
+        ):
+            return ("同思路补位：栈模拟同构", 2)
+        return None
+
+    return None
+
+
+def candidate_has_sample(candidate: WeeklyCandidate) -> bool:
+    text = (ROOT / candidate.relative_path).read_text(encoding="utf-8")
+    return any(keyword in text for keyword in ["输入样例", "输出样例", "Sample Input", "Sample Output"])
+
+
+def supplement_rank_key(candidate: WeeklyCandidate, selected_schools: set[str]) -> tuple:
+    note_penalty = 0 if not candidate.notes else 1
+    school_penalty = 0 if candidate.school not in selected_schools else 1
+    return (
+        candidate.supplement_priority,
+        note_penalty,
+        school_penalty,
+        candidate.school,
+        candidate.index,
+        candidate.title,
+    )
+
+
 def pick_weekly_candidates(candidates: list[WeeklyCandidate], week_tags: set[str], target_count: int) -> list[WeeklyCandidate]:
     by_difficulty: dict[str, list[WeeklyCandidate]] = defaultdict(list)
     for candidate in candidates:
@@ -831,10 +897,61 @@ def pick_weekly_candidates(candidates: list[WeeklyCandidate], week_tags: set[str
     return selected[:target_count]
 
 
+def pick_weekly_supplements(
+    candidates: list[WeeklyCandidate],
+    target_count: int,
+    selected: list[WeeklyCandidate],
+) -> list[WeeklyCandidate]:
+    if target_count <= 0 or not candidates:
+        return []
+
+    by_difficulty: dict[str, list[WeeklyCandidate]] = defaultdict(list)
+    for candidate in candidates:
+        by_difficulty[candidate.difficulty].append(candidate)
+
+    picked: list[WeeklyCandidate] = []
+    selected_paths = {candidate.relative_path for candidate in selected}
+    expected = compute_expected_counts(15)
+    fallback = {
+        "简单": ["中等", "困难"],
+        "中等": ["简单", "困难"],
+        "困难": ["中等", "简单"],
+    }
+
+    while len(picked) < target_count:
+        schools = {item.school for item in [*selected, *picked]}
+        counts = Counter(item.difficulty for item in [*selected, *picked])
+        deficits = []
+        for difficulty in ["困难", "中等", "简单"]:
+            deficits.append((expected[difficulty] - counts[difficulty], DIFFICULTY_ORDER[difficulty], difficulty))
+        deficits.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+
+        progress = False
+        for _, _, missing_difficulty in deficits:
+            preferred = [missing_difficulty, *fallback[missing_difficulty]]
+            for difficulty in preferred:
+                pool = [candidate for candidate in by_difficulty[difficulty] if candidate.relative_path not in selected_paths]
+                if not pool:
+                    continue
+                pool.sort(key=lambda item: supplement_rank_key(item, schools))
+                chosen = pool[0]
+                picked.append(chosen)
+                selected_paths.add(chosen.relative_path)
+                progress = True
+                break
+            if progress:
+                break
+        if not progress:
+            break
+
+    return picked[:target_count]
+
+
 def build_weekly_sets() -> list[WeeklySet]:
     configs = {config["key"]: config for config in WEEKLY_GROUP_CONFIGS}
+    all_candidates = load_catalog_candidates()
     by_week: dict[str, list[WeeklyCandidate]] = {config["key"]: [] for config in WEEKLY_GROUP_CONFIGS}
-    for candidate in load_catalog_candidates():
+    for candidate in all_candidates:
         for config in WEEKLY_GROUP_CONFIGS:
             if candidate.scopes & config["tags"]:
                 by_week[config["key"]].append(candidate)
@@ -846,6 +963,22 @@ def build_weekly_sets() -> list[WeeklySet]:
         remaining = [candidate for candidate in by_week[week_key] if candidate.relative_path not in used_paths]
         target_count = min(15, len(remaining))
         selected = pick_weekly_candidates(remaining, config["tags"], target_count)
+        if week_key != "WEEK1" and len(selected) < 15:
+            supplement_pool: list[WeeklyCandidate] = []
+            for candidate in all_candidates:
+                if candidate.relative_path in used_paths or candidate.relative_path in {item.relative_path for item in selected}:
+                    continue
+                reason = supplement_reason_for_week(candidate, week_key)
+                if not reason or not candidate_has_sample(candidate):
+                    continue
+                supplement_pool.append(
+                    replace(
+                        candidate,
+                        weekly_remark=reason[0],
+                        supplement_priority=reason[1],
+                    )
+                )
+            selected.extend(pick_weekly_supplements(supplement_pool, 15 - len(selected), selected))
         used_paths.update(candidate.relative_path for candidate in selected)
         result[week_key] = WeeklySet(
             key=week_key,
@@ -853,7 +986,7 @@ def build_weekly_sets() -> list[WeeklySet]:
             title=config["title"],
             date_range=config["date_range"],
             tag_display=config["tag_display"],
-            expected_count=target_count,
+            expected_count=min(15, len(selected)),
             selected=selected,
         )
     return [result[config["key"]] for config in WEEKLY_GROUP_CONFIGS]
@@ -862,12 +995,14 @@ def build_weekly_sets() -> list[WeeklySet]:
 def write_weekly_group_readme(week_dir: Path, weekly_set: WeeklySet) -> None:
     counts = Counter(candidate.difficulty for candidate in weekly_set.selected)
     actual_total = len(weekly_set.selected)
-    expected_counts = compute_expected_counts(weekly_set.expected_count)
+    expected_counts = compute_expected_counts(min(15, max(actual_total, weekly_set.expected_count)))
     notes = []
     if weekly_set.key == "WEEK4":
         notes.append("当前仓库尚未单独维护 `单调栈 / 单调队列` 标签，本周按 `栈 / 队列` 题组织。")
+    if any(candidate.weekly_remark for candidate in weekly_set.selected):
+        notes.append("本周在主标签题不足时，按相邻思维补题；补位题已在备注列中标注原因。")
     if actual_total < 15:
-        notes.append(f"按主题纯度优先筛选后，本周仅有 {actual_total} 道可用题。")
+        notes.append(f"按主标签与相邻思维补位后，本周仍仅有 {actual_total} 道可用题。")
     if (
         counts["简单"] != expected_counts["简单"]
         or counts["中等"] != expected_counts["中等"]
@@ -890,15 +1025,15 @@ def write_weekly_group_readme(week_dir: Path, weekly_set: WeeklySet) -> None:
         lines.append(f"- 说明：{note}\n")
     lines.extend([
         "\n## 题目列表\n\n",
-        "| 序号 | 题目 | 难度 | 范围 | 学校 | 来源 | 原题链接 |\n",
-        "| --- | --- | --- | --- | --- | --- | --- |\n",
+        "| 序号 | 题目 | 难度 | 范围 | 学校 | 来源 | 原题链接 | 备注 |\n",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |\n",
     ])
     for index, candidate in enumerate(weekly_set.selected, start=1):
         weekly_rel = f"./{index:02d}-{sanitize_filename(candidate.title)}.md"
         original_rel = Path(os.path.relpath(ROOT / candidate.relative_path, week_dir))
         lines.append(
             f"| {index:02d} | [{candidate.title}]({weekly_rel}) | {candidate.difficulty} | {candidate.scope} | "
-            f"{candidate.school} | {candidate.source} | [{candidate.school}-{candidate.index}]({original_rel.as_posix()}) |\n"
+            f"{candidate.school} | {candidate.source} | [{candidate.school}-{candidate.index}]({original_rel.as_posix()}) | {candidate.weekly_remark} |\n"
         )
     week_dir.joinpath("README.md").write_text("".join(lines), encoding="utf-8")
 
@@ -911,7 +1046,7 @@ def write_weekly_groups() -> list[WeeklySet]:
         "# 组题目录\n\n",
         "- 当前根据前 4 周规划生成专题训练题单。\n",
         "- 题源只使用 `docs/problem-catalog.csv` 中 `已整理 + keep` 的题目。\n",
-        "- 选题规则：主题纯度优先、跨周不重复、候选不足时不跨专题补位。\n",
+        "- 选题规则：主标签优先、跨周不重复、候选不足时按相邻思维补位。\n",
         "- 每周目录内复制训练题面，并在题目文件头部保留原题来源信息。\n\n",
         "## 周次总览\n\n",
         "| 周次 | 日期 | 主题 | 实际题量 | 实际难度分布 | 目录 |\n",
