@@ -28,6 +28,15 @@ SOURCE_LABELS = {
     "考研复试机试真题": "考研",
 }
 SOURCE_ORDER = {"保研": 0, "考研": 1}
+SCOPE_LABELS = [
+    "模拟", "枚举", "排序", "数学", "字符串", "双指针",
+    "递归", "回溯", "DFS", "BFS", "搜索",
+    "数据结构", "栈", "队列", "链表", "堆", "并查集", "树状数组",
+    "树", "二叉树", "图论", "最短路", "最小生成树",
+    "二分", "前缀和", "差分", "哈希",
+    "动态规划", "背包", "区间DP", "RMQ", "ST表", "KMP",
+]
+SCOPE_SET = set(SCOPE_LABELS)
 
 
 @dataclass
@@ -136,6 +145,117 @@ def infer_difficulty(problem: Problem) -> str:
     if score >= 3:
         return "中等"
     return "简单"
+
+
+def normalize_scope(value: str) -> str:
+    labels = []
+    for part in value.split(","):
+        label = part.strip()
+        if label and label in SCOPE_SET and label not in labels:
+            labels.append(label)
+    return ",".join(labels[:3])
+
+
+def infer_scope(problem: Problem) -> str:
+    text = f"{problem.title}\n{problem.content}"
+    labels: list[str] = []
+
+    def add(label: str) -> None:
+        if label in SCOPE_SET and label not in labels and len(labels) < 3:
+            labels.append(label)
+
+    if any(keyword in text for keyword in ["KMP", "前缀函数", "next数组", "失配"]):
+        add("字符串")
+        add("KMP")
+    if any(keyword in text for keyword in ["树状数组", "Fenwick", "lowbit"]):
+        add("数据结构")
+        add("树状数组")
+    if any(keyword in text for keyword in ["RMQ", "区间最值查询"]):
+        add("RMQ")
+    if any(keyword in text for keyword in ["ST表", "Sparse Table"]):
+        add("ST表")
+    if any(keyword in text for keyword in ["双指针", "滑动窗口", "尺取", "左右指针"]):
+        add("双指针")
+    if any(keyword in text for keyword in ["最短路径", "Dijkstra", "Floyd", "Bellman"]):
+        add("图论")
+        add("最短路")
+    if any(keyword in text for keyword in ["最小生成树", "Kruskal", "Prim"]):
+        add("图论")
+        add("最小生成树")
+    if any(keyword in text for keyword in ["图", "边", "顶点", "邻接", "可达", "连通"]):
+        add("图论")
+    if any(keyword in text for keyword in ["二叉树", "前序", "中序", "后序", "BST"]):
+        add("二叉树")
+    elif "树" in text:
+        add("树")
+    if any(keyword in text for keyword in ["DFS", "深度优先"]):
+        add("DFS")
+    if any(keyword in text for keyword in ["BFS", "广度优先", "队列搜索"]):
+        add("BFS")
+    if any(keyword in text for keyword in ["搜索", "迷宫", "走迷宫"]):
+        add("搜索")
+    if any(keyword in text for keyword in ["回溯", "八皇后", "全排列"]):
+        add("回溯")
+    if any(keyword in text for keyword in ["动态规划", "DP", "最优值", "状态转移", "最长上升子序列", "LCS"]):
+        add("动态规划")
+    if any(keyword in text for keyword in ["背包", "采药", "点菜问题"]):
+        add("动态规划")
+        add("背包")
+    if any(keyword in text for keyword in ["区间DP"]):
+        add("动态规划")
+        add("区间DP")
+    if any(keyword in text for keyword in ["前缀和"]):
+        add("前缀和")
+    if any(keyword in text for keyword in ["差分"]):
+        add("差分")
+    if any(keyword in text for keyword in ["哈希", "映射", "字典"]):
+        add("哈希")
+    if any(keyword in text for keyword in ["二分", "二分查找", "第K", "中位数", "有序"]):
+        add("二分")
+    if any(keyword in text for keyword in ["栈"]):
+        add("数据结构")
+        add("栈")
+    if any(keyword in text for keyword in ["队列"]):
+        add("数据结构")
+        add("队列")
+    if any(keyword in text for keyword in ["链表"]):
+        add("数据结构")
+        add("链表")
+    if any(keyword in text for keyword in ["堆", "优先队列"]):
+        add("数据结构")
+        add("堆")
+    if any(keyword in text for keyword in ["并查集", "Union-Find"]):
+        add("数据结构")
+        add("并查集")
+    if any(keyword in text for keyword in ["字符串", "子串", "单词", "密码", "文本"]):
+        add("字符串")
+    if any(keyword in text for keyword in ["排序", "排名", "排序后"]):
+        add("排序")
+    if any(keyword in text for keyword in ["枚举", "遍历所有", "求所有", "所有可能"]):
+        add("枚举")
+    if any(keyword in text for keyword in ["数", "素数", "公约数", "质因数", "进制", "阶乘", "组合数", "几何", "矩阵面积"]):
+        add("数学")
+    if any(keyword in text for keyword in ["模拟", "按规则", "照题意"]):
+        add("模拟")
+
+    if not labels:
+        title = problem.title
+        if any(keyword in title for keyword in ["排序", "排名"]):
+            add("排序")
+        elif any(keyword in title for keyword in ["字符串", "密码", "单词"]):
+            add("字符串")
+        elif any(keyword in title for keyword in ["树", "二叉树"]):
+            add("二叉树" if "二叉树" in title else "树")
+        elif any(keyword in title for keyword in ["图", "路径", "网络", "道路"]):
+            add("图论")
+        elif any(keyword in title for keyword in ["数组", "矩阵", "队列", "栈", "链表", "堆"]):
+            add("数据结构")
+        elif any(keyword in title for keyword in ["最短", "最小", "最大", "第K", "最长"]):
+            add("动态规划")
+        else:
+            add("模拟")
+
+    return ",".join(labels[:3])
 
 
 def discover_source_files() -> list[SourceFile]:
@@ -321,14 +441,17 @@ def apply_analysis_to_school(
 ) -> tuple[list[Problem], list[NearDuplicateIssue]]:
     school_data = analysis.get("schools", {}).get(school, {})
     difficulty_map = school_data.get("difficulties", {})
+    scope_map = school_data.get("scopes", {})
     duplicate_specs = school_data.get("duplicates", [])
     problems_by_key = {problem.stable_key: problem for problem in problems}
 
     for problem in problems:
         if problem.status == "已整理":
             problem.difficulty = difficulty_map.get(problem.stable_key, infer_difficulty(problem))
+            problem.scope = normalize_scope(scope_map.get(problem.stable_key, infer_scope(problem)))
         else:
             problem.difficulty = "待定"
+            problem.scope = ""
 
     issues: list[NearDuplicateIssue] = []
     keys_to_remove: set[str] = set()
@@ -406,7 +529,7 @@ def write_school_readme(school_dir: Path, school: str, problems: list[Problem]) 
         f"- 待复核：{'是' if has_review else '否'}\n",
         "- 目录内混放保研/考研题目，来源以 `README` 表格标记区分。\n",
         "- 难度枚举：`简单 / 中等 / 困难`；`待补充` 题保持 `待定`。\n",
-        "- 范围字段首轮留空，后续补齐标签。\n",
+        "- `已整理` 题已补齐范围标签；`待补充` 题暂留空。\n",
         "- 编号规则：前段编号全部为已整理题目，待补充题统一后置。\n\n",
         "## 已整理题目\n\n",
     ]
@@ -508,7 +631,7 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int,
 ## 说明
 
 - 首轮重构优先完成结构切分、难度推测和索引生成。
-- `已整理` 题已补齐难度字段，范围标签后续补齐。
+- `已整理` 题已补齐难度字段与范围标签。
 - 原文中 `待添加` 的题目已保留为独立文件，并在学校 `README` 中标记为 `待补充`。
 - 学校 `README` 采用“两段分组”：先列已整理题目，再列待补充题目。
 - 同文件内的占位型重复题会自动去重；同校高重合的已整理题会额外复核并清理明确重复项。
