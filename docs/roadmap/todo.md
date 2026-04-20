@@ -8,6 +8,7 @@
 - [x] 按学校拆分为独立题目文件并生成学校 `README.md`。
 - [x] 生成 `progress-index.md`、`exceptions.md`、`worker-manifest.md`。
 - [x] 将所有原始 `.md` 标记为 `done`。
+- [x] 将学校内 `待补充` 题统一后置编号，并将 `README` 改为两段分组展示。
 
 ## 待办
 

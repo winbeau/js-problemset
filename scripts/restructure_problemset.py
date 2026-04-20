@@ -39,7 +39,7 @@ class Problem:
     source_label: str
     source_file: str
     source_path: Path
-    local_index: int
+    source_order: int
     title: str
     filename: str
     content: str
@@ -59,6 +59,10 @@ def sanitize_filename(name: str) -> str:
         "|": "｜",
     })
     return name.translate(table).strip()
+
+
+def detect_problem_status(content: str, title: str) -> str:
+    return "待补充" if content.strip() == f"# {title}\n\n待添加" else "已整理"
 
 
 def discover_source_files() -> list[SourceFile]:
@@ -212,22 +216,45 @@ def freeze_manifest(groups: dict[str, list[SourceFile]]) -> dict[str, int]:
     return manifest
 
 
-def write_school_readme(school_dir: Path, school: str, problems: list[Problem]) -> None:
+def render_problem_table(problems: list[Problem], start_index: int) -> list[str]:
     lines = [
-        f"# {school}\n\n",
-        f"- 题目总数：{len(problems)}\n",
-        "- 目录内混放保研/考研题目，来源以 `README` 表格标记区分。\n",
-        "- 难度枚举：`简单 / 中等 / 困难`，首轮统一记为 `待定`。\n",
-        "- 范围字段首轮留空，后续补齐标签。\n\n",
         "| 序号 | 题目 | 来源 | 难度 | 范围 | 状态 | 备注 |\n",
         "| --- | --- | --- | --- | --- | --- | --- |\n",
     ]
-    for problem in problems:
+    for offset, problem in enumerate(problems, start=start_index):
         rel = f"./{problem.filename}"
         note = problem.note or ""
         lines.append(
-            f"| {problem.local_index:03d} | [{problem.title}]({rel}) | {problem.source_label} | 待定 |  | {problem.status} | {note} |\n"
+            f"| {offset:03d} | [{problem.title}]({rel}) | {problem.source_label} | 待定 |  | {problem.status} | {note} |\n"
         )
+    return lines
+
+
+def write_school_readme(school_dir: Path, school: str, problems: list[Problem]) -> None:
+    ready = [problem for problem in problems if problem.status == "已整理"]
+    pending = [problem for problem in problems if problem.status == "待补充"]
+    has_review = any("待复核" in problem.note for problem in problems)
+    lines = [
+        f"# {school}\n\n",
+        f"- 题目总数：{len(problems)}\n",
+        f"- 已整理：{len(ready)}\n",
+        f"- 待补充：{len(pending)}\n",
+        f"- 待复核：{'是' if has_review else '否'}\n",
+        "- 目录内混放保研/考研题目，来源以 `README` 表格标记区分。\n",
+        "- 难度枚举：`简单 / 中等 / 困难`，首轮统一记为 `待定`。\n",
+        "- 范围字段首轮留空，后续补齐标签。\n",
+        "- 编号规则：前段编号全部为已整理题目，待补充题统一后置。\n\n",
+        "## 已整理题目\n\n",
+    ]
+    if ready:
+        lines.extend(render_problem_table(ready, start_index=1))
+    else:
+        lines.append("当前暂无已整理题目。\n")
+    lines.append("\n## 待补充题目\n\n")
+    if pending:
+        lines.extend(render_problem_table(pending, start_index=len(ready) + 1))
+    else:
+        lines.append("当前暂无待补充题目。\n")
     school_dir.joinpath("README.md").write_text("".join(lines), encoding="utf-8")
 
 
@@ -255,6 +282,7 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int)
 - 每道题拆为一个独立 `.md`
 - 每个学校有一个 `README.md` 汇总题目、来源、难度、范围与状态
 - `README` 中 `来源` 字段用于区分 `保研` / `考研`
+- 题目编号规则为“已整理在前，待补充后置”
 
 ### 查看重构进度
 
@@ -270,6 +298,7 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int)
 - 首轮重构优先完成结构切分和索引生成。
 - 难度默认记为 `待定`，范围标签后续补齐。
 - 原文中 `待添加` 的题目已保留为独立文件，并在学校 `README` 中标记为 `待补充`。
+- 学校 `README` 采用“两段分组”：先列已整理题目，再列待补充题目。
 """
     ROOT.joinpath("README.md").write_text(content, encoding="utf-8")
 
@@ -290,6 +319,7 @@ def write_docs(
 - 结构异常、标题异常、重复题名等问题不写回主状态，统一记录到 `exceptions.md`。
 - 并行执行以“学校”为最小写入归属，同一学校的保研/考研文件必须落在同一个 worker。
 - 根 `README.md` 和 `docs/roadmap/*` 仅由主 agent 维护。
+- 学校内编号规则固定为：`已整理` 在前、`待补充` 在后，同状态内保持原始顺序。
 """
     DOCS_DIR.joinpath("README.md").write_text(README, encoding="utf-8")
 
@@ -358,7 +388,8 @@ def write_docs(
         "- [x] 归档原始题库到 `raw/`。\n",
         "- [x] 按学校拆分为独立题目文件并生成学校 `README.md`。\n",
         "- [x] 生成 `progress-index.md`、`exceptions.md`、`worker-manifest.md`。\n",
-        "- [x] 将所有原始 `.md` 标记为 `done`。\n\n",
+        "- [x] 将所有原始 `.md` 标记为 `done`。\n",
+        "- [x] 将学校内 `待补充` 题统一后置编号，并将 `README` 改为两段分组展示。\n\n",
         "## 待办\n\n",
         "- [ ] 补齐各学校 `README.md` 中的难度字段。\n",
         "- [ ] 为题目补充范围标签。\n",
@@ -416,14 +447,14 @@ def main() -> None:
         files.sort(key=lambda item: (SOURCE_ORDER[item.source_label], item.filename))
         school_dir = SCHOOLS_DIR / school
         school_dir.mkdir(parents=True, exist_ok=True)
-        local_index = 1
+        source_order = 1
         for source in files:
             chunks, issues, summary = parse_file(source)
             summaries[source.filename] = summary
             if issues:
                 file_issues[source.filename] = issues
             for title, content in chunks:
-                status = "待补充" if content.strip() == f"# {title}\n\n待添加" else "已整理"
+                status = detect_problem_status(content, title)
                 note_parts = []
                 duplicates = [
                     issue for issue in issues
@@ -433,23 +464,26 @@ def main() -> None:
                     note_parts.append("同文件重复题名")
                 if any(issue["issue_type"] in {"single_problem_file", "missing_school_suffix", "school_suffix_mismatch", "meta_heading_at_h2"} for issue in issues):
                     note_parts.append("待复核")
-                filename = f"{local_index:03d}-{sanitize_filename(title)}.md"
-                school_dir.joinpath(filename).write_text(content, encoding="utf-8")
                 school_problems[school].append(
                     Problem(
                         school=school,
                         source_label=source.source_label,
                         source_file=source.filename,
                         source_path=source.path,
-                        local_index=local_index,
+                        source_order=source_order,
                         title=title,
-                        filename=filename,
+                        filename="",
                         content=content,
                         status=status,
                         note="，".join(dict.fromkeys(note_parts)),
                     )
                 )
-                local_index += 1
+                source_order += 1
+        school_problems[school].sort(key=lambda problem: (problem.status == "待补充", problem.source_order))
+        for final_index, problem in enumerate(school_problems[school], start=1):
+            filename = f"{final_index:03d}-{sanitize_filename(problem.title)}.md"
+            school_dir.joinpath(filename).write_text(problem.content, encoding="utf-8")
+            problem.filename = filename
         write_school_readme(school_dir, school, school_problems[school])
 
     manifest = freeze_manifest(grouped)
