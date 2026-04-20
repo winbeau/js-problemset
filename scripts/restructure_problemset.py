@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import csv
+import hashlib
+import json
 import re
 import shutil
 from collections import Counter, defaultdict
@@ -12,6 +15,8 @@ ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw"
 SCHOOLS_DIR = ROOT / "schools"
 DOCS_DIR = ROOT / "docs" / "roadmap"
+ANALYSIS_PATH = ROOT / "docs" / "problem-analysis.json"
+CATALOG_CSV_PATH = ROOT / "docs" / "problem-catalog.csv"
 
 FILE_RE = re.compile(r"^(?P<school>.*)计算机(?P<kind>保研机试真题|考研复试机试真题)\.md$")
 STD_HEADING_RE = re.compile(r"^##\s+(?P<title>.+?)\s*-\s*(?P<school>.+?)\s*$")
@@ -45,6 +50,11 @@ class Problem:
     content: str
     status: str
     note: str
+    stable_key: str
+    difficulty: str = "待定"
+    scope: str = ""
+    dedupe_decision: str = "keep"
+    duplicate_group: str = ""
 
 
 @dataclass
@@ -52,6 +62,16 @@ class DuplicateResolution:
     source_file: str
     title: str
     resolution: str
+
+
+@dataclass
+class NearDuplicateIssue:
+    school: str
+    keys: list[str]
+    titles: list[str]
+    decision: str
+    canonical: str | None
+    reason: str
 
 
 def sanitize_filename(name: str) -> str:
@@ -74,6 +94,48 @@ def detect_problem_status(content: str, title: str) -> str:
 
 def normalize_title(title: str) -> str:
     return re.sub(r"\s+", " ", title.strip())
+
+
+def make_stable_key(school: str, source_label: str, title: str, content: str, occurrence: int) -> str:
+    digest = hashlib.sha1(content.encode("utf-8")).hexdigest()[:12]
+    return f"{school}::{source_label}::{normalize_title(title)}::{occurrence:02d}::{digest}"
+
+
+def load_analysis() -> dict:
+    if not ANALYSIS_PATH.exists():
+        return {"version": 1, "schools": {}}
+    data = json.loads(ANALYSIS_PATH.read_text(encoding="utf-8"))
+    data.setdefault("version", 1)
+    data.setdefault("schools", {})
+    return data
+
+
+def infer_difficulty(problem: Problem) -> str:
+    text = f"{problem.title}\n{problem.content}"
+    hard_keywords = [
+        "最短路径", "最小生成树", "连通", "欧拉", "哈夫曼", "AVL", "背包", "LCS",
+        "最长公共子序列", "图", "树上", "调度", "网络", "最优", "概率", "搜索",
+        "迷宫", "路径", "子矩阵", "最长子回文串", "青蛙过河",
+    ]
+    medium_keywords = [
+        "二叉树", "树", "排序", "子序列", "回文", "组合", "查找", "矩阵", "字符串",
+        "密码", "进制", "日期", "质数", "阶乘", "队列", "链表", "洗牌", "数组",
+        "众数", "中位数", "第K", "转置", "前缀", "后缀", "逆序", "构造",
+    ]
+    score = 0
+    score += sum(keyword in text for keyword in hard_keywords) * 2
+    score += sum(keyword in text for keyword in medium_keywords)
+    if "#### 输入格式" in problem.content and "#### 输出格式" in problem.content:
+        score += 1
+    if len(problem.content) > 900:
+        score += 1
+    if len(problem.content) > 1500:
+        score += 1
+    if score >= 7:
+        return "困难"
+    if score >= 3:
+        return "中等"
+    return "简单"
 
 
 def discover_source_files() -> list[SourceFile]:
@@ -252,6 +314,59 @@ def dedupe_school_problems(problems: list[Problem]) -> tuple[list[Problem], dict
     return kept, resolutions
 
 
+def apply_analysis_to_school(
+    school: str,
+    problems: list[Problem],
+    analysis: dict,
+) -> tuple[list[Problem], list[NearDuplicateIssue]]:
+    school_data = analysis.get("schools", {}).get(school, {})
+    difficulty_map = school_data.get("difficulties", {})
+    duplicate_specs = school_data.get("duplicates", [])
+    problems_by_key = {problem.stable_key: problem for problem in problems}
+
+    for problem in problems:
+        if problem.status == "已整理":
+            problem.difficulty = difficulty_map.get(problem.stable_key, infer_difficulty(problem))
+        else:
+            problem.difficulty = "待定"
+
+    issues: list[NearDuplicateIssue] = []
+    keys_to_remove: set[str] = set()
+    for idx, spec in enumerate(duplicate_specs, start=1):
+        keys = [key for key in spec.get("keys", []) if key in problems_by_key]
+        if len(keys) < 2:
+            continue
+        decision = spec.get("decision", "review")
+        canonical = spec.get("canonical")
+        if canonical not in keys:
+            canonical = keys[0]
+        reason = spec.get("reason", "")
+        group_id = f"{school}-dup-{idx:02d}"
+        for key in keys:
+            problem = problems_by_key[key]
+            problem.duplicate_group = group_id
+            problem.dedupe_decision = decision
+            if decision == "review" and "近重复待复核" not in problem.note:
+                problem.note = "，".join(filter(None, [problem.note, "近重复待复核"]))
+        if decision == "remove":
+            for key in keys:
+                if key != canonical:
+                    keys_to_remove.add(key)
+        issues.append(
+            NearDuplicateIssue(
+                school=school,
+                keys=keys,
+                titles=[problems_by_key[key].title for key in keys],
+                decision=decision,
+                canonical=canonical,
+                reason=reason,
+            )
+        )
+
+    kept = [problem for problem in problems if problem.stable_key not in keys_to_remove]
+    return kept, issues
+
+
 def freeze_manifest(groups: dict[str, list[SourceFile]]) -> dict[str, int]:
     weighted = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
     buckets = {1: [], 2: [], 3: []}
@@ -274,7 +389,7 @@ def render_problem_table(problems: list[Problem], start_index: int) -> list[str]
         rel = f"./{problem.filename}"
         note = problem.note or ""
         lines.append(
-            f"| {offset:03d} | [{problem.title}]({rel}) | {problem.source_label} | 待定 |  | {problem.status} | {note} |\n"
+            f"| {offset:03d} | [{problem.title}]({rel}) | {problem.source_label} | {problem.difficulty} | {problem.scope} | {problem.status} | {note} |\n"
         )
     return lines
 
@@ -290,7 +405,7 @@ def write_school_readme(school_dir: Path, school: str, problems: list[Problem]) 
         f"- 待补充：{len(pending)}\n",
         f"- 待复核：{'是' if has_review else '否'}\n",
         "- 目录内混放保研/考研题目，来源以 `README` 表格标记区分。\n",
-        "- 难度枚举：`简单 / 中等 / 困难`，首轮统一记为 `待定`。\n",
+        "- 难度枚举：`简单 / 中等 / 困难`；`待补充` 题保持 `待定`。\n",
         "- 范围字段首轮留空，后续补齐标签。\n",
         "- 编号规则：前段编号全部为已整理题目，待补充题统一后置。\n\n",
         "## 已整理题目\n\n",
@@ -307,7 +422,46 @@ def write_school_readme(school_dir: Path, school: str, problems: list[Problem]) 
     school_dir.joinpath("README.md").write_text("".join(lines), encoding="utf-8")
 
 
-def write_root_readme(total_files: int, total_schools: int, total_problems: int) -> None:
+def write_catalog_csv(school_problems: dict[str, list[Problem]]) -> None:
+    CATALOG_CSV_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with CATALOG_CSV_PATH.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow([
+            "school",
+            "index",
+            "title",
+            "source",
+            "status",
+            "difficulty",
+            "scope",
+            "readme_section",
+            "relative_path",
+            "duplicate_group",
+            "dedupe_decision",
+            "notes",
+        ])
+        for school in sorted(school_problems):
+            for index, problem in enumerate(school_problems[school], start=1):
+                writer.writerow([
+                    school,
+                    f"{index:03d}",
+                    problem.title,
+                    problem.source_label,
+                    problem.status,
+                    problem.difficulty,
+                    problem.scope,
+                    "已整理题目" if problem.status == "已整理" else "待补充题目",
+                    f"schools/{school}/{problem.filename}",
+                    problem.duplicate_group,
+                    problem.dedupe_decision,
+                    problem.note,
+                ])
+
+
+def write_root_readme(total_files: int, total_schools: int, total_problems: int, school_problems: dict[str, list[Problem]]) -> None:
+    ready = [problem for problems in school_problems.values() for problem in problems if problem.status == "已整理"]
+    pending = [problem for problems in school_problems.values() for problem in problems if problem.status == "待补充"]
+    difficulty_counts = Counter(problem.difficulty for problem in ready)
     content = f"""# 各大高校计算机考研/保研复试机试真题
 
 仓库现已重构为“原始题库 + 整理题库 + 进度账本”三层结构，便于持续切分、补全和长期维护。
@@ -317,6 +471,13 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int)
 - `raw/`：保留原始学校级整份题单，共 {total_files} 个原始 `.md` 文件。
 - `schools/`：整理后的学校题库，共 {total_schools} 个学校目录、{total_problems} 道独立题目文件。
 - `docs/roadmap/`：重构实施进度、异常清单、并行分工和后续待办。
+
+## 当前统计
+
+- 已整理题目：{len(ready)}
+- 待补充题目：{len(pending)}
+- 总题目数：{total_problems}
+- 已整理难度分布：简单 {difficulty_counts['简单']} / 中等 {difficulty_counts['中等']} / 困难 {difficulty_counts['困难']}
 
 ## 如何使用
 
@@ -342,14 +503,15 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int)
 - `exceptions.md`：结构异常、重复题名、单题文件等问题记录
 - `worker-manifest.md`：3 个并行 worker 的学校分片清单
 - `todo.md`：详细待办与后续补全事项
+- `problem-catalog.csv`：全仓题目汇总表，包含状态、难度、路径和去重决策
 
 ## 说明
 
-- 首轮重构优先完成结构切分和索引生成。
-- 难度默认记为 `待定`，范围标签后续补齐。
+- 首轮重构优先完成结构切分、难度推测和索引生成。
+- `已整理` 题已补齐难度字段，范围标签后续补齐。
 - 原文中 `待添加` 的题目已保留为独立文件，并在学校 `README` 中标记为 `待补充`。
 - 学校 `README` 采用“两段分组”：先列已整理题目，再列待补充题目。
-- 同文件内的占位型重复题会自动去重；正式题面重复项继续保留并标记复核。
+- 同文件内的占位型重复题会自动去重；同校高重合的已整理题会额外复核并清理明确重复项。
 """
     ROOT.joinpath("README.md").write_text(content, encoding="utf-8")
 
@@ -361,6 +523,7 @@ def write_docs(
     manifest: dict[str, int],
     school_problems: dict[str, list[Problem]],
     duplicate_resolutions: dict[tuple[str, str], str],
+    near_duplicate_issues: list[NearDuplicateIssue],
 ) -> None:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -373,6 +536,7 @@ def write_docs(
 - 根 `README.md` 和 `docs/roadmap/*` 仅由主 agent 维护。
 - 学校内编号规则固定为：`已整理` 在前、`待补充` 在后，同状态内保持原始顺序。
 - 同文件同名重复题默认只自动清理占位项，不自动合并正式题面重复。
+- 同校已整理题的高重合清理由 `docs/problem-analysis.json` 驱动，只有 `remove` 决策会自动删除。
 """
     DOCS_DIR.joinpath("README.md").write_text(README, encoding="utf-8")
 
@@ -418,6 +582,13 @@ def write_docs(
             exceptions_lines.append(
                 f"| `{filename}` | {issue.get('line_no', '')} | {issue['issue_type']} | {issue['severity']} | {raw_heading} | {action} | {status} |\n"
             )
+    for issue in near_duplicate_issues:
+        title = " / ".join(issue.titles).replace("|", "\\|")
+        action = issue.reason.replace("|", "\\|")
+        status = "resolved" if issue.decision == "remove" else "pending"
+        exceptions_lines.append(
+            f"| `{issue.school}` |  | near_duplicate_ready_problem | medium | {title} | {action} | {status} |\n"
+        )
     DOCS_DIR.joinpath("exceptions.md").write_text("".join(exceptions_lines), encoding="utf-8")
 
     worker_groups: dict[int, list[str]] = defaultdict(list)
@@ -457,11 +628,12 @@ def write_docs(
         "- [x] 将所有原始 `.md` 标记为 `done`。\n",
         "- [x] 将学校内 `待补充` 题统一后置编号，并将 `README` 改为两段分组展示。\n",
         "- [x] 自动删除同文件内的占位型重复题，保留正式题面重复项待复核。\n\n",
+        "- [x] 为全部 `已整理` 题补齐难度推测，并生成题目总表 `docs/problem-catalog.csv`。\n",
+        "- [x] 复核并清理同校内明确高重合的已整理题。\n\n",
         "## 待办\n\n",
-        "- [ ] 补齐各学校 `README.md` 中的难度字段。\n",
         "- [ ] 为题目补充范围标签。\n",
         "- [ ] 复核 `exceptions.md` 中标记的异常标题与单题文件。\n",
-        "- [ ] 复核仍保留的正式题面重复项是否需要进一步合并或补备注。\n",
+        "- [ ] 复核仍保留的正式题面重复项和 `near_duplicate_ready_problem` 待复核项是否需要进一步合并或补备注。\n",
         "- [ ] 补全所有 `待补充` 题面的正式内容。\n\n",
         "## 学校级实施清单\n\n",
         "| 学校 | Worker | 状态 | 题目数 | 备注 |\n",
@@ -496,6 +668,7 @@ def main() -> None:
     source_files = discover_source_files()
     if not source_files:
         raise SystemExit("No source markdown files found in repository root.")
+    analysis = load_analysis()
 
     for path in [SCHOOLS_DIR, DOCS_DIR]:
         ensure_clean_dir(path)
@@ -510,6 +683,8 @@ def main() -> None:
     summaries: dict[str, dict] = {}
     school_problems: dict[str, list[Problem]] = defaultdict(list)
     duplicate_resolutions: dict[tuple[str, str], str] = {}
+    near_duplicate_issues: list[NearDuplicateIssue] = []
+    stable_key_counters: dict[str, Counter] = defaultdict(Counter)
 
     for school, files in grouped.items():
         files.sort(key=lambda item: (SOURCE_ORDER[item.source_label], item.filename))
@@ -524,6 +699,9 @@ def main() -> None:
             for title, content in chunks:
                 status = detect_problem_status(content, title)
                 note_parts = []
+                digest = hashlib.sha1(content.encode("utf-8")).hexdigest()[:12]
+                stable_tuple = (source.source_label, normalize_title(title), digest)
+                stable_key_counters[school][stable_tuple] += 1
                 duplicates = [
                     issue for issue in issues
                     if issue["issue_type"] == "duplicate_title_in_file" and issue.get("raw_heading") == f"## {title}-{school}"
@@ -544,11 +722,14 @@ def main() -> None:
                         content=content,
                         status=status,
                         note="，".join(dict.fromkeys(note_parts)),
+                        stable_key=make_stable_key(school, source.source_label, title, content, stable_key_counters[school][stable_tuple]),
                     )
                 )
                 source_order += 1
         school_problems[school], resolutions = dedupe_school_problems(school_problems[school])
         duplicate_resolutions.update(resolutions)
+        school_problems[school], school_near_dups = apply_analysis_to_school(school, school_problems[school], analysis)
+        near_duplicate_issues.extend(school_near_dups)
         school_problems[school].sort(key=lambda problem: (problem.status == "待补充", problem.source_order))
         for final_index, problem in enumerate(school_problems[school], start=1):
             filename = f"{final_index:03d}-{sanitize_filename(problem.title)}.md"
@@ -557,9 +738,10 @@ def main() -> None:
         write_school_readme(school_dir, school, school_problems[school])
 
     manifest = freeze_manifest(grouped)
-    write_docs(source_files, file_issues, summaries, manifest, school_problems, duplicate_resolutions)
+    write_docs(source_files, file_issues, summaries, manifest, school_problems, duplicate_resolutions, near_duplicate_issues)
+    write_catalog_csv(school_problems)
     total_problems = sum(len(items) for items in school_problems.values())
-    write_root_readme(len(source_files), len(grouped), total_problems)
+    write_root_readme(len(source_files), len(grouped), total_problems, school_problems)
 
 
 if __name__ == "__main__":
