@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 import re
 import shutil
 from collections import Counter, defaultdict
@@ -14,6 +15,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RAW_DIR = ROOT / "raw"
 SCHOOLS_DIR = ROOT / "schools"
+GROUPS_DIR = ROOT / "组题"
 DOCS_DIR = ROOT / "docs" / "roadmap"
 ANALYSIS_PATH = ROOT / "docs" / "problem-analysis.json"
 CATALOG_CSV_PATH = ROOT / "docs" / "problem-catalog.csv"
@@ -37,6 +39,66 @@ SCOPE_LABELS = [
     "动态规划", "背包", "区间DP", "RMQ", "ST表", "KMP",
 ]
 SCOPE_SET = set(SCOPE_LABELS)
+DIFFICULTY_ORDER = {"简单": 0, "中等": 1, "困难": 2}
+WEEKLY_GROUP_CONFIGS = [
+    {
+        "key": "WEEK1",
+        "name": "WEEK1-排序-模拟与复杂度意识",
+        "title": "WEEK1 排序、模拟与复杂度意识",
+        "date_range": "4.27-5.3",
+        "tags": {"排序", "模拟"},
+        "tag_display": "排序 / 模拟",
+    },
+    {
+        "key": "WEEK2",
+        "name": "WEEK2-双指针-二分",
+        "title": "WEEK2 双指针与二分",
+        "date_range": "5.4-5.10",
+        "tags": {"双指针", "二分"},
+        "tag_display": "双指针 / 二分",
+    },
+    {
+        "key": "WEEK3",
+        "name": "WEEK3-前缀和-差分-哈希",
+        "title": "WEEK3 前缀和、差分与哈希",
+        "date_range": "5.11-5.17",
+        "tags": {"前缀和", "差分", "哈希"},
+        "tag_display": "前缀和 / 差分 / 哈希",
+    },
+    {
+        "key": "WEEK4",
+        "name": "WEEK4-栈-队列-单调结构",
+        "title": "WEEK4 栈、队列与单调结构",
+        "date_range": "5.18-5.24",
+        "tags": {"栈", "队列"},
+        "tag_display": "栈 / 队列",
+    },
+]
+WEEKLY_SELECTION_ORDER = ["WEEK4", "WEEK3", "WEEK2", "WEEK1"]
+
+
+@dataclass
+class WeeklyCandidate:
+    school: str
+    index: str
+    title: str
+    source: str
+    difficulty: str
+    scope: str
+    relative_path: str
+    notes: str
+    scopes: set[str]
+
+
+@dataclass
+class WeeklySet:
+    key: str
+    name: str
+    title: str
+    date_range: str
+    tag_display: str
+    expected_count: int
+    selected: list[WeeklyCandidate]
 
 
 @dataclass
@@ -593,6 +655,7 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int,
 
 - `raw/`：保留原始学校级整份题单，共 {total_files} 个原始 `.md` 文件。
 - `schools/`：整理后的学校题库，共 {total_schools} 个学校目录、{total_problems} 道独立题目文件。
+- `组题/`：按周组织的训练题单目录，当前内置前 4 周专题训练集。
 - `docs/roadmap/`：重构实施进度、异常清单、并行分工和后续待办。
 
 ## 当前统计
@@ -628,6 +691,15 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int,
 - `todo.md`：详细待办与后续补全事项
 - `problem-catalog.csv`：全仓题目汇总表，包含状态、难度、路径和去重决策
 
+### 查看训练题单
+
+进入 `组题/`：
+
+- 顶层 `README.md` 汇总周次、日期、主题与实际选题统计
+- 每周一个子目录，包含题单 `README.md` 与复制出的训练题面
+- 组题仅使用 `已整理 + keep` 的题目，跨周不重复
+- 当前按主题纯度优先组织前 4 周，部分周次会因题池不足而少于 15 题
+
 ## 说明
 
 - 首轮重构优先完成结构切分、难度推测和索引生成。
@@ -637,6 +709,240 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int,
 - 同文件内的占位型重复题会自动去重；同校高重合的已整理题会额外复核并清理明确重复项。
 """
     ROOT.joinpath("README.md").write_text(content, encoding="utf-8")
+
+
+def load_catalog_candidates() -> list[WeeklyCandidate]:
+    candidates: list[WeeklyCandidate] = []
+    if not CATALOG_CSV_PATH.exists():
+        return candidates
+    with CATALOG_CSV_PATH.open(encoding="utf-8", newline="") as fh:
+        reader = csv.DictReader(fh)
+        for row in reader:
+            if row["status"] != "已整理" or row["dedupe_decision"] != "keep":
+                continue
+            scopes = {item.strip() for item in row["scope"].split(",") if item.strip()}
+            candidates.append(
+                WeeklyCandidate(
+                    school=row["school"],
+                    index=row["index"],
+                    title=row["title"],
+                    source=row["source"],
+                    difficulty=row["difficulty"],
+                    scope=row["scope"],
+                    relative_path=row["relative_path"],
+                    notes=row["notes"],
+                    scopes=scopes,
+                )
+            )
+    return candidates
+
+
+def compute_expected_counts(total: int) -> dict[str, int]:
+    if total >= 15:
+        return {"简单": 3, "中等": 9, "困难": 3}
+    base = {
+        "简单": int(total * 0.2),
+        "中等": int(total * 0.6),
+        "困难": int(total * 0.2),
+    }
+    remainder = total - sum(base.values())
+    for difficulty in ["中等", "简单", "困难"]:
+        if remainder <= 0:
+            break
+        base[difficulty] += 1
+        remainder -= 1
+    return base
+
+
+def candidate_rank_key(candidate: WeeklyCandidate, week_tags: set[str], selected_schools: set[str]) -> tuple:
+    matched_count = len(candidate.scopes & week_tags)
+    extra_count = len(candidate.scopes - week_tags)
+    note_penalty = 0 if not candidate.notes else 1
+    school_penalty = 0 if candidate.school not in selected_schools else 1
+    return (
+        -matched_count,
+        extra_count,
+        note_penalty,
+        school_penalty,
+        candidate.school,
+        candidate.index,
+        candidate.title,
+    )
+
+
+def pick_weekly_candidates(candidates: list[WeeklyCandidate], week_tags: set[str], target_count: int) -> list[WeeklyCandidate]:
+    by_difficulty: dict[str, list[WeeklyCandidate]] = defaultdict(list)
+    for candidate in candidates:
+        by_difficulty[candidate.difficulty].append(candidate)
+
+    selected: list[WeeklyCandidate] = []
+    selected_paths: set[str] = set()
+    expected = compute_expected_counts(target_count)
+    fallback = {
+        "简单": ["中等", "困难"],
+        "中等": ["简单", "困难"],
+        "困难": ["中等", "简单"],
+    }
+
+    def take_from_pool(difficulty: str, count: int) -> None:
+        for _ in range(count):
+            pool = [candidate for candidate in by_difficulty[difficulty] if candidate.relative_path not in selected_paths]
+            if not pool:
+                return
+            schools = {item.school for item in selected}
+            pool.sort(key=lambda item: candidate_rank_key(item, week_tags, schools))
+            chosen = pool[0]
+            selected.append(chosen)
+            selected_paths.add(chosen.relative_path)
+
+    for difficulty in ["简单", "中等", "困难"]:
+        take_from_pool(difficulty, min(expected[difficulty], len(by_difficulty[difficulty])))
+
+    while len(selected) < target_count:
+        progress = False
+        current_counts = Counter(item.difficulty for item in selected)
+        deficits = []
+        for difficulty in ["简单", "中等", "困难"]:
+            deficits.append((expected[difficulty] - current_counts[difficulty], DIFFICULTY_ORDER[difficulty], difficulty))
+        deficits.sort(key=lambda item: (item[0], -item[1]), reverse=True)
+        for _, _, missing_difficulty in deficits:
+            for fallback_difficulty in fallback[missing_difficulty]:
+                pool = [candidate for candidate in by_difficulty[fallback_difficulty] if candidate.relative_path not in selected_paths]
+                if not pool:
+                    continue
+                schools = {item.school for item in selected}
+                pool.sort(key=lambda item: candidate_rank_key(item, week_tags, schools))
+                chosen = pool[0]
+                selected.append(chosen)
+                selected_paths.add(chosen.relative_path)
+                progress = True
+                break
+            if progress:
+                break
+        if not progress:
+            break
+
+    selected.sort(
+        key=lambda item: (
+            DIFFICULTY_ORDER.get(item.difficulty, 99),
+            candidate_rank_key(item, week_tags, set()),
+        )
+    )
+    return selected[:target_count]
+
+
+def build_weekly_sets() -> list[WeeklySet]:
+    configs = {config["key"]: config for config in WEEKLY_GROUP_CONFIGS}
+    by_week: dict[str, list[WeeklyCandidate]] = {config["key"]: [] for config in WEEKLY_GROUP_CONFIGS}
+    for candidate in load_catalog_candidates():
+        for config in WEEKLY_GROUP_CONFIGS:
+            if candidate.scopes & config["tags"]:
+                by_week[config["key"]].append(candidate)
+
+    used_paths: set[str] = set()
+    result: dict[str, WeeklySet] = {}
+    for week_key in WEEKLY_SELECTION_ORDER:
+        config = configs[week_key]
+        remaining = [candidate for candidate in by_week[week_key] if candidate.relative_path not in used_paths]
+        target_count = min(15, len(remaining))
+        selected = pick_weekly_candidates(remaining, config["tags"], target_count)
+        used_paths.update(candidate.relative_path for candidate in selected)
+        result[week_key] = WeeklySet(
+            key=week_key,
+            name=config["name"],
+            title=config["title"],
+            date_range=config["date_range"],
+            tag_display=config["tag_display"],
+            expected_count=target_count,
+            selected=selected,
+        )
+    return [result[config["key"]] for config in WEEKLY_GROUP_CONFIGS]
+
+
+def write_weekly_group_readme(week_dir: Path, weekly_set: WeeklySet) -> None:
+    counts = Counter(candidate.difficulty for candidate in weekly_set.selected)
+    actual_total = len(weekly_set.selected)
+    expected_counts = compute_expected_counts(weekly_set.expected_count)
+    notes = []
+    if weekly_set.key == "WEEK4":
+        notes.append("当前仓库尚未单独维护 `单调栈 / 单调队列` 标签，本周按 `栈 / 队列` 题组织。")
+    if actual_total < 15:
+        notes.append(f"按主题纯度优先筛选后，本周仅有 {actual_total} 道可用题。")
+    if (
+        counts["简单"] != expected_counts["简单"]
+        or counts["中等"] != expected_counts["中等"]
+        or counts["困难"] != expected_counts["困难"]
+    ):
+        notes.append(
+            "题池未完全满足目标难度配比，已在本周主题候选池内按相邻难度补位。"
+        )
+
+    lines = [
+        f"# {weekly_set.title}\n\n",
+        f"- 日期：{weekly_set.date_range}\n",
+        f"- 主题标签：{weekly_set.tag_display}\n",
+        "- 选题口径：仅使用 `已整理 + keep` 题目，跨周不重复，主题纯度优先。\n",
+        f"- 实际题量：{actual_total}\n",
+        f"- 实际难度分布：简单 {counts['简单']} / 中等 {counts['中等']} / 困难 {counts['困难']}\n",
+        f"- 目标难度分布：简单 {expected_counts['简单']} / 中等 {expected_counts['中等']} / 困难 {expected_counts['困难']}\n",
+    ]
+    for note in notes:
+        lines.append(f"- 说明：{note}\n")
+    lines.extend([
+        "\n## 题目列表\n\n",
+        "| 序号 | 题目 | 难度 | 范围 | 学校 | 来源 | 原题链接 |\n",
+        "| --- | --- | --- | --- | --- | --- | --- |\n",
+    ])
+    for index, candidate in enumerate(weekly_set.selected, start=1):
+        weekly_rel = f"./{index:02d}-{sanitize_filename(candidate.title)}.md"
+        original_rel = Path(os.path.relpath(ROOT / candidate.relative_path, week_dir))
+        lines.append(
+            f"| {index:02d} | [{candidate.title}]({weekly_rel}) | {candidate.difficulty} | {candidate.scope} | "
+            f"{candidate.school} | {candidate.source} | [{candidate.school}-{candidate.index}]({original_rel.as_posix()}) |\n"
+        )
+    week_dir.joinpath("README.md").write_text("".join(lines), encoding="utf-8")
+
+
+def write_weekly_groups() -> list[WeeklySet]:
+    weekly_sets = build_weekly_sets()
+    GROUPS_DIR.mkdir(parents=True, exist_ok=True)
+
+    root_lines = [
+        "# 组题目录\n\n",
+        "- 当前根据前 4 周规划生成专题训练题单。\n",
+        "- 题源只使用 `docs/problem-catalog.csv` 中 `已整理 + keep` 的题目。\n",
+        "- 选题规则：主题纯度优先、跨周不重复、候选不足时不跨专题补位。\n",
+        "- 每周目录内复制训练题面，并在题目文件头部保留原题来源信息。\n\n",
+        "## 周次总览\n\n",
+        "| 周次 | 日期 | 主题 | 实际题量 | 实际难度分布 | 目录 |\n",
+        "| --- | --- | --- | --- | --- | --- |\n",
+    ]
+
+    for weekly_set in weekly_sets:
+        week_dir = GROUPS_DIR / weekly_set.name
+        week_dir.mkdir(parents=True, exist_ok=True)
+        for index, candidate in enumerate(weekly_set.selected, start=1):
+            original_path = ROOT / candidate.relative_path
+            original_content = original_path.read_text(encoding="utf-8").rstrip()
+            copied = (
+                f"> 训练周次：{weekly_set.title}（{weekly_set.date_range}）\n"
+                f"> 原题来源：{candidate.school} {candidate.source} {candidate.index}\n"
+                f"> 原题路径：`{candidate.relative_path}`\n"
+                f"> 难度 / 范围：{candidate.difficulty} / {candidate.scope}\n\n"
+                f"{original_content}\n"
+            )
+            filename = f"{index:02d}-{sanitize_filename(candidate.title)}.md"
+            week_dir.joinpath(filename).write_text(copied, encoding="utf-8")
+        write_weekly_group_readme(week_dir, weekly_set)
+        counts = Counter(candidate.difficulty for candidate in weekly_set.selected)
+        root_lines.append(
+            f"| {weekly_set.key} | {weekly_set.date_range} | {weekly_set.tag_display} | {len(weekly_set.selected)} | "
+            f"简单 {counts['简单']} / 中等 {counts['中等']} / 困难 {counts['困难']} | "
+            f"[{weekly_set.name}](./{weekly_set.name}/README.md) |\n"
+        )
+
+    GROUPS_DIR.joinpath("README.md").write_text("".join(root_lines), encoding="utf-8")
+    return weekly_sets
 
 
 def write_docs(
@@ -752,9 +1058,10 @@ def write_docs(
         "- [x] 将学校内 `待补充` 题统一后置编号，并将 `README` 改为两段分组展示。\n",
         "- [x] 自动删除同文件内的占位型重复题，保留正式题面重复项待复核。\n\n",
         "- [x] 为全部 `已整理` 题补齐难度推测，并生成题目总表 `docs/problem-catalog.csv`。\n",
+        "- [x] 为全部 `已整理` 题补齐范围标签，并将结果写回学校 `README` 与题目总表。\n",
         "- [x] 复核并清理同校内明确高重合的已整理题。\n\n",
+        "- [x] 按前 4 周规划生成 `组题/` 目录，输出按周训练题单。\n\n",
         "## 待办\n\n",
-        "- [ ] 为题目补充范围标签。\n",
         "- [ ] 复核 `exceptions.md` 中标记的异常标题与单题文件。\n",
         "- [ ] 复核仍保留的正式题面重复项和 `near_duplicate_ready_problem` 待复核项是否需要进一步合并或补备注。\n",
         "- [ ] 补全所有 `待补充` 题面的正式内容。\n\n",
@@ -793,7 +1100,7 @@ def main() -> None:
         raise SystemExit("No source markdown files found in repository root.")
     analysis = load_analysis()
 
-    for path in [SCHOOLS_DIR, DOCS_DIR]:
+    for path in [SCHOOLS_DIR, DOCS_DIR, GROUPS_DIR]:
         ensure_clean_dir(path)
     RAW_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -863,6 +1170,7 @@ def main() -> None:
     manifest = freeze_manifest(grouped)
     write_docs(source_files, file_issues, summaries, manifest, school_problems, duplicate_resolutions, near_duplicate_issues)
     write_catalog_csv(school_problems)
+    write_weekly_groups()
     total_problems = sum(len(items) for items in school_problems.values())
     write_root_readme(len(source_files), len(grouped), total_problems, school_problems)
 
