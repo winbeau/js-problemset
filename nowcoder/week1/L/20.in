@@ -1,0 +1,6 @@
+read a b c d e
+57 82 9 81 6
+f=((((a+b)*c)-d)*e)
+g=((((((a+d)+c)+f)-e)*b)+a)
+print a b c d e f g
+exit

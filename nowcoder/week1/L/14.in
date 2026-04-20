@@ -1,0 +1,22 @@
+read m o
+7 23
+o=m-7+o+3+(m/9)
+read f
+79
+read b e
+34 28
+k=o-34+(89)+51-f-b*19
+print f e m o
+read c j x
+47 62 5
+i=(k+16*c-31)
+read i
+94
+k=(f)+(35)*((k))
+z=x*48
+n=((c))-((f))
+j=(x)/2*(88)*n/3
+d=j/2
+o=i*20
+print c b z m
+exit

@@ -1,0 +1,12 @@
+read v
+87
+print v
+print v
+v=(v)*90*86-v+90/4
+print v
+x=45+v-v*89-v+66-22-84
+a=78+v/2
+print v x a
+t=(a)
+print t v x a
+exit

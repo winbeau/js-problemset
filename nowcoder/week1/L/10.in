@@ -1,0 +1,29 @@
+read g h
+97 5
+d=(27)-(68)
+p=86*d
+print g d p
+l=87+p*(g)
+print d h
+print l h g p
+print p
+e=(d*d)
+read j
+63
+read i x
+97 74
+print e
+print l x
+p=97*j-45*d
+read z
+55
+m=p*94/1
+o=(56)-j/2
+read h z
+3 69
+read o
+62
+print e p m
+m=d/6/9
+x=69+j+45*12
+exit

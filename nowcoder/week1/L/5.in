@@ -1,0 +1,21 @@
+read d
+46
+k=d*d
+t=27+16
+c=(k)
+k=54+27
+read a d h
+82 2 97
+y=45-66
+g=50+h
+print y k
+print a t
+read a q s
+29 99 36
+p=35-87
+c=(6)
+print h
+d=(h)
+u=k/7
+p=t+9
+exit

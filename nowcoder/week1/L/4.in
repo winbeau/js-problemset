@@ -1,0 +1,60 @@
+read d f h
+74 25 75
+read j v
+71 15
+read t
+37
+w=(j/5*v/8)
+read y
+6
+read d p
+66 24
+read c y z
+44 20 79
+print v z
+e=(85+44)/1
+read l w
+90 90
+read g k v
+43 55 96
+print l
+t=j+h+(y)+47/6/8
+a=t*e-97*90
+print j y a c
+print f
+print v
+o=c*71/5+(p/6)
+e=((35)+(86))
+print f d t
+read l
+77
+o=d+c+(e)-z+0/5
+read d o
+45 100
+print p l
+h=(j)-71*j
+read k
+56
+l=3-29+p/2
+read u x y
+10 25 49
+a=69+w*95/9
+x=53/7
+read v
+96
+f=(f/1)
+print p f
+m=v*z*91*o
+print e
+read h p
+100 39
+o=(l+63)
+read g q
+33 95
+read i j z
+29 58 96
+print z
+print l e
+m=(((h)))
+print o x i
+exit

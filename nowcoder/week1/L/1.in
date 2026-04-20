@@ -1,0 +1,39 @@
+read p t
+99 51
+print p t
+print p t
+print p
+v=(t)
+print v p t
+read f m w
+18 79 25
+b=p*f+7/4*v+66-(76)
+p=b*94*b/3
+read j u
+78 65
+c=54-v
+print t p m u
+z=c/9
+j=15+41
+print w
+read t y
+19 51
+read p
+6
+read d q t
+13 100 29
+print b
+p=j/3
+read m p
+48 43
+print p w d v
+print f
+read m
+23
+e=d-f+93+w
+v=37*56
+read e o
+49 33
+read i t
+67 84
+exit

@@ -1,0 +1,17 @@
+read z
+41
+read d h u
+17 21 17
+x=(d*z)
+a=99*h*67/4
+f=x/8+x-x
+print a d u
+e=(24)*h/1
+d=28/4
+n=h-61/2*15/1-46/8
+print e f h
+print h
+b=(u)*(60)+12/5/7
+z=h+30/3
+d=(h/7)-((u))
+exit

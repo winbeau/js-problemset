@@ -1,0 +1,37 @@
+read p
+24
+read b h z
+78 88 100
+u=(z)-h*20*p-34-h/7
+print u
+s=h/9+z+u
+print z h s b
+q=p*25
+m=(3-12)-b/7*(43)
+print m
+read n t
+56 82
+w=(z+h)
+g=m/9
+read b
+88
+print p z
+e=43-86/5*(87-s)
+read p z
+54 54
+print q
+u=(49+92)
+read o v y
+99 43 95
+p=((o))/4
+read k o w
+42 11 47
+c=n+80-46*94
+j=(v/9)
+read p
+68
+y=o-m/6
+a=6-w-t+82
+b=b-a/7
+l=j/9
+exit

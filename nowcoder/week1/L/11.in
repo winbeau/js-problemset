@@ -1,0 +1,32 @@
+read e x
+90 39
+p=(72)
+u=e/3
+print u e
+m=93/9
+d=(84)
+e=e*56
+print p u d
+print u
+v=64*87
+y=u*21
+n=v*e
+read f z
+34 51
+s=(61)
+print d s u
+read w
+86
+read h m w
+27 4 69
+a=34/9
+read c q
+72 92
+k=s+56
+read d r
+6 2
+print p a c k
+read z
+42
+l=(f)
+exit

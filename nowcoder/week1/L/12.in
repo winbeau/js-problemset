@@ -1,0 +1,62 @@
+read t
+73
+read d g i
+78 56 83
+h=t/3
+print g t
+r=69+4
+i=i*h
+print i h
+k=(66)
+n=38*t
+b=64/3
+read f r t
+71 54 94
+read d w
+25 20
+print t f
+print f b d r
+read a h q
+36 14 16
+print a
+print t
+print g d t
+read d n
+40 41
+print k w d n
+g=q/6*w+w
+print t d n
+print d k
+i=(b+45)
+x=n*12*k*62
+a=3-18
+f=(25-x)
+print d g b i
+p=(a+g)
+read c e k
+81 63 99
+read l s t
+62 27 62
+a=d-40
+print q
+i=81*h
+u=33/3
+read b e w
+10 24 39
+read a i l
+15 37 29
+e=74*b
+v=(65)-(90)
+print p
+read d l z
+81 74 41
+read a w
+2 41
+f=c*45
+t=(26-h)
+print s a p q
+read a
+66
+h=(87)+38/8
+u=92*97-u/5
+exit

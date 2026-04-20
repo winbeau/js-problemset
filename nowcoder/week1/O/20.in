@@ -1,0 +1,16 @@
+INTa
+INTb
+IF 0
+INTc
+c=1+2+3
+PRINTc
+IF 0
+INTd
+d=999*888
+PRINTd+c
+IF 0
+PRINTd^c&b
+ENDIF
+ENDIF
+ENDIF
+PRINTa+b

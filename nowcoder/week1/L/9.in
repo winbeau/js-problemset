@@ -1,0 +1,41 @@
+read f p x
+91 37 11
+read u
+49
+print p
+q=45+p
+print x p u f
+d=39-13-u-8
+b=99/4
+s=p-d-f+f
+u=b+q
+d=96+u
+j=f-90
+read b j q
+75 28 52
+v=0-91-u/9
+print p d f b
+print p f
+read i
+76
+k=62*p
+print v
+read q
+65
+z=(51)/8
+print v i
+y=f+56+i*u
+read j
+15
+print x u
+f=(k)
+v=47-q/3
+print j f
+print k d p
+print d b
+print p
+a=v-f
+print d v q
+read i s t
+51 57 43
+exit
