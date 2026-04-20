@@ -47,6 +47,13 @@ class Problem:
     note: str
 
 
+@dataclass
+class DuplicateResolution:
+    source_file: str
+    title: str
+    resolution: str
+
+
 def sanitize_filename(name: str) -> str:
     table = str.maketrans({
         "/": "／",
@@ -63,6 +70,10 @@ def sanitize_filename(name: str) -> str:
 
 def detect_problem_status(content: str, title: str) -> str:
     return "待补充" if content.strip() == f"# {title}\n\n待添加" else "已整理"
+
+
+def normalize_title(title: str) -> str:
+    return re.sub(r"\s+", " ", title.strip())
 
 
 def discover_source_files() -> list[SourceFile]:
@@ -203,6 +214,44 @@ def ensure_clean_dir(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def dedupe_school_problems(problems: list[Problem]) -> tuple[list[Problem], dict[tuple[str, str], str]]:
+    grouped: dict[tuple[str, str], list[Problem]] = defaultdict(list)
+    for problem in problems:
+        grouped[(problem.source_file, normalize_title(problem.title))].append(problem)
+
+    kept: list[Problem] = []
+    resolutions: dict[tuple[str, str], str] = {}
+    for key, items in grouped.items():
+        items.sort(key=lambda problem: problem.source_order)
+        if len(items) == 1:
+            kept.extend(items)
+            continue
+
+        ready = [problem for problem in items if problem.status == "已整理"]
+        pending = [problem for problem in items if problem.status == "待补充"]
+        if ready and pending:
+            kept.extend(ready)
+            resolutions[key] = "placeholder_removed"
+            continue
+        if pending and not ready:
+            kept.append(pending[0])
+            resolutions[key] = "pending_collapsed"
+            continue
+
+        kept.extend(items)
+        resolutions[key] = "formal_duplicate_kept"
+
+    kept.sort(key=lambda problem: problem.source_order)
+    active_duplicates = Counter((problem.source_file, normalize_title(problem.title)) for problem in kept)
+    for problem in kept:
+        notes = [note for note in problem.note.split("，") if note]
+        notes = [note for note in notes if note != "同文件重复题名"]
+        if active_duplicates[(problem.source_file, normalize_title(problem.title))] > 1:
+            notes.append("同文件重复题名")
+        problem.note = "，".join(dict.fromkeys(notes))
+    return kept, resolutions
+
+
 def freeze_manifest(groups: dict[str, list[SourceFile]]) -> dict[str, int]:
     weighted = sorted(groups.items(), key=lambda item: (-len(item[1]), item[0]))
     buckets = {1: [], 2: [], 3: []}
@@ -283,6 +332,7 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int)
 - 每个学校有一个 `README.md` 汇总题目、来源、难度、范围与状态
 - `README` 中 `来源` 字段用于区分 `保研` / `考研`
 - 题目编号规则为“已整理在前，待补充后置”
+- 同文件同名且仅为 `待添加` 的重复题会自动清理
 
 ### 查看重构进度
 
@@ -299,6 +349,7 @@ def write_root_readme(total_files: int, total_schools: int, total_problems: int)
 - 难度默认记为 `待定`，范围标签后续补齐。
 - 原文中 `待添加` 的题目已保留为独立文件，并在学校 `README` 中标记为 `待补充`。
 - 学校 `README` 采用“两段分组”：先列已整理题目，再列待补充题目。
+- 同文件内的占位型重复题会自动去重；正式题面重复项继续保留并标记复核。
 """
     ROOT.joinpath("README.md").write_text(content, encoding="utf-8")
 
@@ -309,6 +360,7 @@ def write_docs(
     summaries: dict[str, dict],
     manifest: dict[str, int],
     school_problems: dict[str, list[Problem]],
+    duplicate_resolutions: dict[tuple[str, str], str],
 ) -> None:
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -320,6 +372,7 @@ def write_docs(
 - 并行执行以“学校”为最小写入归属，同一学校的保研/考研文件必须落在同一个 worker。
 - 根 `README.md` 和 `docs/roadmap/*` 仅由主 agent 维护。
 - 学校内编号规则固定为：`已整理` 在前、`待补充` 在后，同状态内保持原始顺序。
+- 同文件同名重复题默认只自动清理占位项，不自动合并正式题面重复。
 """
     DOCS_DIR.joinpath("README.md").write_text(README, encoding="utf-8")
 
@@ -348,9 +401,22 @@ def write_docs(
     for filename in sorted(file_issues):
         for issue in sorted(file_issues[filename], key=lambda item: (item.get("line_no", 0), item["issue_type"])):
             raw_heading = issue.get("raw_heading", "").replace("|", "\\|")
-            action = issue.get("suggested_action", "").replace("|", "\\|")
+            action = issue.get("suggested_action", "")
+            status = "pending"
+            if issue["issue_type"] == "duplicate_title_in_file":
+                match = STD_HEADING_RE.match(issue.get("raw_heading", ""))
+                if match:
+                    key = (filename, normalize_title(match.group("title")))
+                    resolution = duplicate_resolutions.get(key)
+                    if resolution == "placeholder_removed":
+                        action = "已自动删除同名占位重复项，保留正式题面"
+                        status = "resolved"
+                    elif resolution == "pending_collapsed":
+                        action = "已自动合并重复占位题，仅保留首个占位项"
+                        status = "resolved"
+            action = action.replace("|", "\\|")
             exceptions_lines.append(
-                f"| `{filename}` | {issue.get('line_no', '')} | {issue['issue_type']} | {issue['severity']} | {raw_heading} | {action} | pending |\n"
+                f"| `{filename}` | {issue.get('line_no', '')} | {issue['issue_type']} | {issue['severity']} | {raw_heading} | {action} | {status} |\n"
             )
     DOCS_DIR.joinpath("exceptions.md").write_text("".join(exceptions_lines), encoding="utf-8")
 
@@ -389,12 +455,13 @@ def write_docs(
         "- [x] 按学校拆分为独立题目文件并生成学校 `README.md`。\n",
         "- [x] 生成 `progress-index.md`、`exceptions.md`、`worker-manifest.md`。\n",
         "- [x] 将所有原始 `.md` 标记为 `done`。\n",
-        "- [x] 将学校内 `待补充` 题统一后置编号，并将 `README` 改为两段分组展示。\n\n",
+        "- [x] 将学校内 `待补充` 题统一后置编号，并将 `README` 改为两段分组展示。\n",
+        "- [x] 自动删除同文件内的占位型重复题，保留正式题面重复项待复核。\n\n",
         "## 待办\n\n",
         "- [ ] 补齐各学校 `README.md` 中的难度字段。\n",
         "- [ ] 为题目补充范围标签。\n",
         "- [ ] 复核 `exceptions.md` 中标记的异常标题与单题文件。\n",
-        "- [ ] 评估同文件内重复题名是否需要合并或补备注。\n",
+        "- [ ] 复核仍保留的正式题面重复项是否需要进一步合并或补备注。\n",
         "- [ ] 补全所有 `待补充` 题面的正式内容。\n\n",
         "## 学校级实施清单\n\n",
         "| 学校 | Worker | 状态 | 题目数 | 备注 |\n",
@@ -442,6 +509,7 @@ def main() -> None:
     file_issues: dict[str, list[dict]] = {}
     summaries: dict[str, dict] = {}
     school_problems: dict[str, list[Problem]] = defaultdict(list)
+    duplicate_resolutions: dict[tuple[str, str], str] = {}
 
     for school, files in grouped.items():
         files.sort(key=lambda item: (SOURCE_ORDER[item.source_label], item.filename))
@@ -479,6 +547,8 @@ def main() -> None:
                     )
                 )
                 source_order += 1
+        school_problems[school], resolutions = dedupe_school_problems(school_problems[school])
+        duplicate_resolutions.update(resolutions)
         school_problems[school].sort(key=lambda problem: (problem.status == "待补充", problem.source_order))
         for final_index, problem in enumerate(school_problems[school], start=1):
             filename = f"{final_index:03d}-{sanitize_filename(problem.title)}.md"
@@ -487,7 +557,7 @@ def main() -> None:
         write_school_readme(school_dir, school, school_problems[school])
 
     manifest = freeze_manifest(grouped)
-    write_docs(source_files, file_issues, summaries, manifest, school_problems)
+    write_docs(source_files, file_issues, summaries, manifest, school_problems, duplicate_resolutions)
     total_problems = sum(len(items) for items in school_problems.values())
     write_root_readme(len(source_files), len(grouped), total_problems)
 
